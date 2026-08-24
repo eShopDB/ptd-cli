@@ -131,6 +131,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.source_sha }}
           persist-credentials: false
+      - uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869
       - uses: actions/download-artifact@v4
         with:
           name: release-x86_64-unknown-linux-gnu
