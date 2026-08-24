@@ -1,14 +1,52 @@
 name: Release
 
 on:
-  release:
-    types: [created]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix (for example, 0.1.7)
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ inputs.version }}
+  TAG: v${{ inputs.version }}
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Validate release
+        id: source
+        shell: bash
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must use the X.Y.Z format without a v prefix" >&2
+            exit 1
+          fi
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists" >&2
+            exit 1
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +66,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -39,27 +79,100 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Set package version
+        shell: bash
+        run: sed -i.bak -E "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target "${{ matrix.target }}"
 
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../ptd-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz ptd ptd-host
-          cd ../../..
+          cd "target/${{ matrix.target }}/release"
+          tar czf "../../../ptd-cli-${TAG}-${{ matrix.target }}.tar.gz" ptd ptd-host
 
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path "target/${{ matrix.target }}/release/ptd.exe","target/${{ matrix.target }}/release/ptd-host.exe" -DestinationPath "ptd-cli-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/ptd.exe","target/${{ matrix.target }}/release/ptd-host.exe" -DestinationPath "ptd-cli-$env:TAG-${{ matrix.target }}.zip"
 
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+      - name: Upload packaged binaries
+        uses: actions/upload-artifact@v4
         with:
-          files: |
-            ptd-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
-            ptd-cli-${{ github.ref_name }}-${{ matrix.target }}.zip
+          name: release-${{ matrix.target }}
+          path: ptd-cli-${{ env.TAG }}-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  publish:
+    name: Update manifests, tag, and publish
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Update versions, URLs, and hashes
+        run: |
+          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          MACOS_ARM64_SHA=$(sha256sum "dist/ptd-cli-${TAG}-aarch64-apple-darwin.tar.gz" | awk '{print $1}')
+          MACOS_X86_64_SHA=$(sha256sum "dist/ptd-cli-${TAG}-x86_64-apple-darwin.tar.gz" | awk '{print $1}')
+          LINUX_ARM64_SHA=$(sha256sum "dist/ptd-cli-${TAG}-aarch64-unknown-linux-gnu.tar.gz" | awk '{print $1}')
+          LINUX_X86_64_SHA=$(sha256sum "dist/ptd-cli-${TAG}-x86_64-unknown-linux-gnu.tar.gz" | awk '{print $1}')
+          WINDOWS_X86_64_SHA=$(sha256sum "dist/ptd-cli-${TAG}-x86_64-pc-windows-msvc.zip" | awk '{print $1}')
+
+          sed -i.bak -E "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+          cargo metadata --format-version 1 --no-deps >/dev/null
+
+          sed -i.bak -E \
+            -e "s|version \".*\"|version \"${VERSION}\"|" \
+            -e "s|homepage \".*\"|homepage \"https://github.com/${GITHUB_REPOSITORY}\"|" \
+            -e "s|url \"https://github.com/[^/]+/[^/]+/releases|url \"https://github.com/${GITHUB_REPOSITORY}/releases|g" \
+            -e "s|\"aarch64-apple-darwin\" *=> *\".*\"|\"aarch64-apple-darwin\"      => \"${MACOS_ARM64_SHA}\"|" \
+            -e "s|\"x86_64-apple-darwin\" *=> *\".*\"|\"x86_64-apple-darwin\"       => \"${MACOS_X86_64_SHA}\"|" \
+            -e "s|\"aarch64-unknown-linux-gnu\" *=> *\".*\"|\"aarch64-unknown-linux-gnu\" => \"${LINUX_ARM64_SHA}\"|" \
+            -e "s|\"x86_64-unknown-linux-gnu\" *=> *\".*\"|\"x86_64-unknown-linux-gnu\"  => \"${LINUX_X86_64_SHA}\"|" \
+            Formula/ptd-cli.rb
+
+          jq --arg v "$VERSION" \
+             --arg u "${BASE_URL}/ptd-cli-${TAG}-x86_64-pc-windows-msvc.zip" \
+             --arg hash "$WINDOWS_X86_64_SHA" \
+             --arg auto_u "https://github.com/${GITHUB_REPOSITORY}/releases/download/v\$version/ptd-cli-v\$version-x86_64-pc-windows-msvc.zip" \
+             --arg hp "https://github.com/${GITHUB_REPOSITORY}" \
+             '.version = $v | .homepage = $hp | .architecture["64bit"].url = $u | .architecture["64bit"].hash = $hash | .autoupdate.architecture["64bit"].url = $auto_u' \
+             bucket/ptd-cli.json > bucket/ptd-cli.tmp.json
+          mv bucket/ptd-cli.tmp.json bucket/ptd-cli.json
+          rm -f Cargo.toml.bak Formula/ptd-cli.rb.bak
+
+      - name: Commit release metadata
+        run: |
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock Formula/ptd-cli.rb bucket/ptd-cli.json
+          git commit -m "chore(release): prepare ${TAG} [skip ci]"
+          git push origin HEAD:${{ github.event.repository.default_branch }}
+
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" dist/* --title "$TAG" --generate-notes
