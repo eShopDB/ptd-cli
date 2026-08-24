@@ -1,8 +1,10 @@
 name: Release
 
 on:
+  # Disabled on this disposable probe branch so only the minimal
+  # release.created workflow runs during the event experiment.
   release:
-    types: [published]
+    types: [unpublished]
   workflow_dispatch:
     inputs:
       version:
