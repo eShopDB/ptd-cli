@@ -187,6 +187,7 @@ jobs:
         shell: bash
         run: |
           git pull --ff-only origin "${{ github.event.repository.default_branch }}"
+          mkdir -p Formula bucket
           cp generated/ptd-cli.rb Formula/ptd-cli.rb
           cp generated/ptd-cli.json bucket/ptd-cli.json
           git add Formula/ptd-cli.rb bucket/ptd-cli.json
