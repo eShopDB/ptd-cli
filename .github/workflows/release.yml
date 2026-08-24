@@ -147,8 +147,10 @@ jobs:
               -e "s|@LINUX_X86_64_URL@|file://${GITHUB_WORKSPACE}/dist/ptd-cli-${TAG}-x86_64-unknown-linux-gnu.tar.gz|g" \
               -e "s/@LINUX_X86_64_SHA@/${SHA}/g" \
               .github/release/ptd-cli.rb.in > /tmp/ptd-cli.rb
-          brew install --formula /tmp/ptd-cli.rb
-          brew test ptd-cli
+          brew tap-new ptd-test/release
+          cp /tmp/ptd-cli.rb "$(brew --repository ptd-test/release)/Formula/ptd-cli.rb"
+          brew install --formula ptd-test/release/ptd-cli
+          brew test ptd-test/release/ptd-cli
 
   publish:
     name: Publish assets, then manifests
