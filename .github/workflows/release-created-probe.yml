@@ -1,0 +1,18 @@
+name: Probe release.created
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Record event
+        run: |
+          echo "action=${{ github.event.action }}"
+          echo "tag=${{ github.event.release.tag_name }}"
+          test "${{ github.event.action }}" = created
