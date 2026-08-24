@@ -33,6 +33,8 @@ CLI <-- Unix socket <-- ptd-host <--stdin-- Chrome <------+
 
 #### Homebrew (macOS / Linux)
 
+> Homebrew Formula 会在首个包含稳定 Native Host 路径支持的新版本发布并验证后启用；当前的 `v0.1.0` 不具备该支持，请勿用它初始化包管理器安装。
+
 ```bash
 # 添加 tap 并安装
 brew tap pt-plugins/ptd-cli https://github.com/pt-plugins/ptd-cli
@@ -40,6 +42,8 @@ brew install ptd-cli
 ```
 
 #### Scoop (Windows)
+
+> Scoop 清单与 Homebrew Formula 同步在上述新版本发布成功后启用。
 
 ```powershell
 # 添加 bucket 并安装

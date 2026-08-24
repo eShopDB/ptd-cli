@@ -31,6 +31,8 @@ Three components:
 
 #### Homebrew (macOS / Linux)
 
+> The formula will become available after the first new release containing stable Native Host path support has been published and verified. Do not bootstrap a package-manager install from `v0.1.0`, which predates that support.
+
 ```bash
 # Add tap and install
 brew tap pt-plugins/ptd-cli https://github.com/pt-plugins/ptd-cli
@@ -38,6 +40,8 @@ brew install ptd-cli
 ```
 
 #### Scoop (Windows)
+
+> The Scoop manifest will become available together with the Homebrew formula after that release succeeds.
 
 ```powershell
 # Add bucket and install
